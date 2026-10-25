@@ -83,10 +83,164 @@ function sleepSync(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-function releasedToday() {
-  const out = run(`${GIT} -C "${PLUGIN_ROOT}" log --since=midnight --grep="chore: release v" --format=%s 2>&1`);
-  if (!out.ok) return false;
-  return out.stdout.trim().split('\n').some((s) => s.startsWith('chore: release v'));
+// ---------- Deep defect hunt helpers ----------
+
+const IGNORE_DIRS = new Set(['node_modules', '.git', 'logs', 'memory', '.qoder-plugin/cache']);
+
+function collectFiles(dir, exts) {
+  const out = [];
+  if (!fs.existsSync(dir)) return out;
+  const stack = [dir];
+  while (stack.length) {
+    const cur = stack.pop();
+    for (const entry of fs.readdirSync(cur, { withFileTypes: true })) {
+      const p = path.join(cur, entry.name);
+      if (entry.isDirectory()) {
+        if (!IGNORE_DIRS.has(entry.name)) stack.push(p);
+      } else if (exts.some((e) => entry.name.endsWith(e))) {
+        out.push(p);
+      }
+    }
+  }
+  return out;
+}
+
+function rel(p) {
+  return path.relative(PLUGIN_ROOT, p).replace(/\\/g, '/');
+}
+
+// Placeholder / dead-token sweep ("extreme" — catch leftovers that suggest
+// unfinished or broken content). Matched only in product docs, never in the
+// tooling .js that legitimately reference these tokens (e.g. validate.js's
+// "No TODO comments" check), to avoid self-matches.
+const PLACEHOLDER_TOKENS = [
+  'TODO', 'FIXME', 'lorem ipsum', 'loremipsum', '<PLACEHOLDER>',
+  'INSERT_HERE', 'coming soon',
+];
+
+function deepAudit() {
+  const findings = [];
+  const add = (severity, autoFixable, category, file, issue, data) =>
+    findings.push({ severity, autoFixable, category, file, issue, data });
+
+  // B. JS syntax — every .js must parse
+  for (const f of collectFiles(PLUGIN_ROOT, ['.js'])) {
+    const r = run(`node --check "${f}" 2>&1`);
+    if (!r.ok) add('error', false, 'js-syntax', rel(f), `node --check failed`, (r.stderr || r.stdout).trim().slice(0, 300));
+  }
+
+  // C. JSON validity — every .json must parse
+  for (const f of collectFiles(PLUGIN_ROOT, ['.json'])) {
+    try { JSON.parse(fs.readFileSync(f, 'utf8')); }
+    catch (e) { add('error', false, 'json-invalid', rel(f), String(e.message).slice(0, 200)); }
+  }
+
+  // D. Frontmatter required on SKILL.md and consolidated memory files
+  const needFrontmatter = [
+    path.join(PLUGIN_ROOT, 'skills', 'memory-manager', 'SKILL.md'),
+    ...collectFiles(path.join(PLUGIN_ROOT, 'references', 'consolidated'), ['.md']),
+  ];
+  for (const f of needFrontmatter) {
+    if (!fs.existsSync(f)) continue;
+    const head = fs.readFileSync(f, 'utf8').slice(0, 400);
+    if (!/^---\n/.test(head)) add('warn', false, 'frontmatter-missing', rel(f), 'missing YAML frontmatter');
+    else {
+      const fm = head.slice(4, head.indexOf('\n---'));
+      if (!/name:/.test(fm)) add('warn', false, 'frontmatter-missing', rel(f), 'frontmatter lacks name:');
+      if (!/description:/.test(fm)) add('warn', false, 'frontmatter-missing', rel(f), 'frontmatter lacks description:');
+    }
+  }
+
+  // E. Broken relative .md references across all docs
+  const mdFiles = collectFiles(PLUGIN_ROOT, ['.md']);
+  for (const f of mdFiles) {
+    const text = fs.readFileSync(f, 'utf8');
+    const refRe = /(?:\]\(|`)(\.{1,2}\/[A-Za-z0-9._\-\/]+\.md)/g;
+    let m;
+    while ((m = refRe.exec(text))) {
+      const target = path.resolve(path.dirname(f), m[1]);
+      if (!fs.existsSync(target)) add('error', false, 'broken-ref', rel(f), `dangling reference → ${m[1]}`);
+    }
+  }
+
+  // F. Placeholder / dead tokens in PRODUCT DOCS ONLY (never tooling .js,
+  // which legitimately reference these tokens, e.g. validate.js's "No TODO
+  // comments" check — scanning it would self-match and always "find" issues).
+  const docFiles = [
+    ...collectFiles(path.join(PLUGIN_ROOT, 'skills'), ['.md']),
+    ...collectFiles(path.join(PLUGIN_ROOT, 'references'), ['.md']),
+    path.join(PLUGIN_ROOT, 'README.md'),
+    path.join(PLUGIN_ROOT, 'MEMORY.md'),
+  ].filter((f) => fs.existsSync(f));
+  for (const f of docFiles) {
+    const text = fs.readFileSync(f, 'utf8');
+    const hits = PLACEHOLDER_TOKENS.filter((t) => text.includes(t));
+    if (hits.length) add('warn', false, 'placeholder', rel(f), `leftover token(s): ${hits.join(', ')}`);
+  }
+
+  // G. Empty required files
+  for (const f of needFrontmatter) {
+    if (fs.existsSync(f) && fs.statSync(f).size === 0) add('error', false, 'empty-file', rel(f), 'file is 0 bytes');
+  }
+  for (const f of collectFiles(path.join(PLUGIN_ROOT, 'references', 'consolidated'), ['.md'])) {
+    const c = fs.readFileSync(f, 'utf8').trim();
+    if (!c.length) add('error', false, 'empty-memory', rel(f), 'consolidated memory file is empty');
+  }
+
+  // H. Version consistency: plugin.json vs installed _meta.json (auto-fixable)
+  const repoVer = JSON.parse(fs.readFileSync(PKG_JSON, 'utf8')).version;
+  for (const target of SKILL_TARGETS) {
+    const metaFile = path.join(target, '_meta.json');
+    if (!fs.existsSync(metaFile)) { add('warn', true, 'install-meta-missing', target, 'installed _meta.json missing'); continue; }
+    const mv = JSON.parse(fs.readFileSync(metaFile, 'utf8')).version;
+    if (mv !== repoVer) add('warn', true, 'version-drift', target, `installed v${mv} != repo v${repoVer}`, { metaFile, repoVer });
+  }
+
+  // I. Install parity: installed SKILL.md must match repo (auto-fixable)
+  const repoSkill = fs.readFileSync(path.join(PLUGIN_ROOT, 'skills', 'memory-manager', 'SKILL.md'));
+  for (const target of SKILL_TARGETS) {
+    const installed = path.join(target, 'SKILL.md');
+    if (!fs.existsSync(installed)) { add('warn', true, 'install-skill-missing', target, 'installed SKILL.md missing'); continue; }
+    if (fs.readFileSync(installed).toString() !== repoSkill.toString()) {
+      add('warn', true, 'install-drift', target, 'installed SKILL.md differs from repo', { installed, repoSkill: repoSkill.toString() });
+    }
+  }
+
+  // K. Determinism — run validator 3×; any flake is an error
+  for (let i = 0; i < 3; i++) {
+    const v = run(`node "${VALIDATE_SCRIPT}" 2>&1`);
+    if (!v.stdout.includes('Passed: 22/22')) add('error', false, 'validate-flake', rel(VALIDATE_SCRIPT), `validator run ${i + 1}/3 did not pass`, v.stdout.slice(-200));
+  }
+
+  // L. Git hygiene (informational only — not a publish trigger on its own)
+  const status = run(`${GIT} -C "${PLUGIN_ROOT}" status --porcelain 2>&1`);
+  if (status.ok) {
+    const lines = status.stdout.trim().split('\n').filter(Boolean);
+    if (lines.length) add('warn', false, 'git-dirty', '', `${lines.length} uncommitted path(s): ${lines.slice(0, 5).join(' | ')}${lines.length > 5 ? ' …' : ''}`);
+  }
+
+  return findings;
+}
+
+// Apply only the safe, idempotent fixes (all outside the git repo, so they
+// never rewrite tracked source automatically).
+function applyFixes(findings) {
+  let fixed = 0;
+  const repoVer = JSON.parse(fs.readFileSync(PKG_JSON, 'utf8')).version;
+  const repoSkill = fs.readFileSync(path.join(PLUGIN_ROOT, 'skills', 'memory-manager', 'SKILL.md')).toString();
+  for (const f of findings.filter((x) => x.autoFixable)) {
+    if (f.category === 'version-drift' && f.data?.metaFile) {
+      fs.mkdirSync(path.dirname(f.data.metaFile), { recursive: true });
+      const meta = { ownerId: 'agent', slug: 'shared-memory-manager', version: repoVer, publishedAt: Date.now() };
+      fs.writeFileSync(f.data.metaFile, JSON.stringify(meta));
+      fixed++;
+    } else if (f.category === 'install-drift' && f.data?.installed) {
+      fs.mkdirSync(path.dirname(f.data.installed), { recursive: true });
+      fs.writeFileSync(f.data.installed, f.data.repoSkill ?? repoSkill);
+      fixed++;
+    }
+  }
+  return fixed;
 }
 
 function syncDir(src, dst, filterFn) {
@@ -120,7 +274,7 @@ let overallOK = true;
 const steps = [];
 
 // Step 1: Pull latest
-log('\n[1/6] Pulling latest from GitHub...');
+log('\n[1/7] Pulling latest from GitHub...');
 const pull = run(`${GIT} -C "${PLUGIN_ROOT}" pull --ff-only 2>&1`);
 if (pull.ok) {
   log(`  Pull OK: ${pull.stdout.trim().split('\n').pop()}`);
@@ -138,7 +292,7 @@ if (pull.ok) {
 }
 
 // Step 2: Sync to CLAW dirs (before tests, so tests verify installed state)
-log('\n[2/6] Syncing skills and memories to CLAW directories...');
+log('\n[2/7] Syncing skills and memories to CLAW directories...');
 const manifest = JSON.parse(fs.readFileSync(PKG_JSON, 'utf8'));
 let skillSynced = 0, memorySynced = 0;
 for (const target of SKILL_TARGETS) {
@@ -173,7 +327,7 @@ log(`  Memories synced: ${memorySynced} file(s) updated across ${MEMORY_TARGETS.
 steps.push({ name: 'sync', status: 'ok' });
 
 // Step 3: Validate
-log('\n[3/6] Running structural validation...');
+log('\n[3/7] Running structural validation...');
 const validate = run(`node "${VALIDATE_SCRIPT}" 2>&1`);
 const validateOK = validate.stdout.includes('Passed: 22/22');
 log(validateOK ? '  Validation: 22/22 PASS' : `  Validation FAILED: ${validate.stdout.slice(-300)}`);
@@ -181,7 +335,7 @@ steps.push({ name: 'validation', status: validateOK ? 'pass' : 'fail' });
 if (!validateOK) overallOK = false;
 
 // Step 4: Test agents
-log('\n[4/6] Running multi-agent compatibility test...');
+log('\n[4/7] Running multi-agent compatibility test...');
 const agents = run(`node "${TEST_AGENTS_SCRIPT}" 2>&1`);
 const agentsOK = agents.stdout.includes('2400/2400');
 log(agentsOK ? '  Multi-agent test: 2400/2400 PASS' : `  Multi-agent test FAILED`);
@@ -189,25 +343,48 @@ steps.push({ name: 'agent_test', status: agentsOK ? 'pass' : 'fail' });
 if (!agentsOK) overallOK = false;
 
 // Step 5: Test CLAW agents
-log('\n[5/6] Running CLAW agent integration test...');
+log('\n[5/7] Running CLAW agent integration test...');
 const claw = run(`node "${TEST_CLAW_SCRIPT}" 2>&1`);
 const clawOK = claw.stdout.includes('600/600');
 log(clawOK ? '  CLAW agent test: 600/600 PASS' : `  CLAW agent test FAILED`);
 steps.push({ name: 'claw_test', status: clawOK ? 'pass' : 'fail' });
 if (!clawOK) overallOK = false;
 
-// Step 6: Daily release — bump patch, commit, push when every check passed
-log('\n[6/6] Publishing daily release...');
+// Step 6: Deep defect hunt (extreme) — wide, repeated static audit
+log('\n[6/7] Hunting defects across the whole project (extreme pass)...');
+const findings = deepAudit();
+const errorsFound = findings.filter((f) => f.severity === 'error');
+const warnings = findings.filter((f) => f.severity === 'warn');
+log(`  Findings: ${findings.length} total (${errorsFound.length} error, ${warnings.length} warning)`);
+for (const f of findings) {
+  log(`    [${f.severity}${f.autoFixable ? ',auto-fixable' : ''}] ${f.category}${f.file ? ` @ ${f.file}` : ''} — ${f.issue}`);
+}
+let fixesApplied = 0;
+if (findings.some((f) => f.autoFixable)) {
+  fixesApplied = applyFixes(findings);
+  const after = deepAudit();
+  log(`  After fixes: ${after.length} findings remain (${after.filter((f) => f.severity === 'error').length} error)`);
+}
+
+// A run "found defects worth a release" when it has real errors, applied an
+// auto-fix, or caught leftover placeholder/dead tokens. Pure informational
+// notes (e.g. uncommitted work) do not by themselves trigger a publish.
+const actionable = findings.filter((f) => f.severity === 'error' || f.autoFixable || f.category === 'placeholder');
+
+// Step 7: Gated release — publish ONLY if defects were found and handled;
+// a fully clean project does not produce a new version.
+log('\n[7/7] Gated release decision...');
+let publishFail = false;
 if (!overallOK) {
-  log('  Release skipped — earlier checks failed.');
+  log('  No release — required checks (validate / agents / claw) failed.');
   steps.push({ name: 'release', status: 'skipped' });
-} else if (releasedToday()) {
-  log('  Already released today, skipping duplicate publish.');
-  steps.push({ name: 'release', status: 'already-released' });
+} else if (actionable.length === 0) {
+  log('  No release — deep hunt found no actionable defects, project is clean.');
+  steps.push({ name: 'release', status: 'clean' });
 } else {
   const currentVer = JSON.parse(fs.readFileSync(PKG_JSON, 'utf8')).version;
   const newVer = bumpVersion(currentVer);
-  log(`  All checks passed, bumping ${currentVer} → ${newVer}`);
+  log(`  ${actionable.length} actionable defect(s) found → publishing ${currentVer} → ${newVer}`);
   const data = JSON.parse(fs.readFileSync(PKG_JSON, 'utf8'));
   data.version = newVer;
   fs.writeFileSync(PKG_JSON, JSON.stringify(data, null, 2) + '\n');
@@ -218,14 +395,15 @@ if (!overallOK) {
   }
   const add = run(`${GIT} -C "${PLUGIN_ROOT}" add .qoder-plugin/plugin.json`);
   if (!add.ok) {
-    // Another git process may hold index.lock; retry briefly before giving up
     log(`  Add failed, retrying: ${(add.stderr || add.stdout).trim().slice(0, 160)}`);
     sleepSync(2000);
     run(`${GIT} -C "${PLUGIN_ROOT}" add .qoder-plugin/plugin.json`);
   }
-  const commit = run(`${GIT} -C "${PLUGIN_ROOT}" commit -m "chore: release v${newVer} (daily automated release)" 2>&1`);
+  const commitMsg = `chore: release v${newVer} (daily auto-release: ${actionable.length} defect(s) found, ${fixesApplied} auto-fixed)`;
+  const commit = run(`${GIT} -C "${PLUGIN_ROOT}" commit -m "${commitMsg.replace(/"/g, '\\"')}" 2>&1`);
   if (!commit.ok) {
     log(`  Commit failed: ${(commit.stderr || commit.stdout).trim().slice(0, 200)}`);
+    publishFail = true;
   }
   let push = run(`${GIT} -C "${PLUGIN_ROOT}" push origin main 2>&1`);
   for (let attempt = 1; !push.ok && attempt <= 2; attempt++) {
@@ -234,21 +412,23 @@ if (!overallOK) {
     push = run(`${GIT} -C "${PLUGIN_ROOT}" push origin main 2>&1`);
   }
   if (push.ok) {
-    log(`  Published v${newVer} to GitHub ✓`);
+    log(`  Published v${newVer} to GitHub ✓ (${actionable.length} defects found, ${fixesApplied} auto-fixed)`);
   } else {
     log(`  Push failed: ${push.stderr?.trim()?.slice(0, 200) || push.stdout?.trim()?.slice(0, 200)}`);
+    publishFail = true;
   }
-  steps.push({ name: 'release', status: push.ok ? 'published' : 'fail', version: newVer });
+  steps.push({ name: 'release', status: (push.ok && commit.ok) ? 'published' : 'fail', version: newVer, defects: findings.length, actionable: actionable.length, fixed: fixesApplied });
 }
 
 // Summary
 log('\n========================================');
 log('Daily Maintenance Complete');
 log('========================================');
-const allPass = overallOK && pull.ok !== false;
-log(`Result: ${allPass ? 'ALL PASS ✓' : 'SOME CHECKS FAILED ✗'}`);
-log(`Steps: ${steps.map(s => `${s.name}=${s.status}`).join(', ')}`);
+const exitCode = (!overallOK || publishFail) ? 1 : 0;
+const releaseStatus = steps[steps.length - 1]?.status;
+log(`Result: ${overallOK ? 'checks ALL PASS ✓' : 'checks FAILED ✗'} | release: ${releaseStatus}`);
+log(`Steps: ${steps.map((s) => `${s.name}=${s.status}`).join(', ')}`);
 log(`Log: ${LOG_FILE}`);
 log('========================================');
 
-process.exit(allPass ? 0 : 1);
+process.exit(exitCode);
