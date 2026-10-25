@@ -57,6 +57,10 @@ function bumpVersion(current) {
   return `${major}.${minor}.${parseInt(patch) + 1}`;
 }
 
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 function syncDir(src, dst, filterFn) {
   if (!fs.existsSync(src)) return 0;
   if (!fs.existsSync(dst)) fs.mkdirSync(dst, { recursive: true });
@@ -178,7 +182,13 @@ if (overallOK) {
     fs.mkdirSync(target, { recursive: true });
     fs.writeFileSync(path.join(target, '_meta.json'), JSON.stringify(meta));
   }
-  run(`git -C "${PLUGIN_ROOT}" add .qoder-plugin/plugin.json`);
+  const add = run(`git -C "${PLUGIN_ROOT}" add .qoder-plugin/plugin.json`);
+  if (!add.ok) {
+    // Another git process may hold index.lock; retry briefly before giving up
+    log(`  Add failed, retrying: ${(add.stderr || add.stdout).trim().slice(0, 160)}`);
+    sleepSync(2000);
+    run(`git -C "${PLUGIN_ROOT}" add .qoder-plugin/plugin.json`);
+  }
   const commit = run(`git -C "${PLUGIN_ROOT}" commit -m "chore: release v${newVer} (daily automated release)" 2>&1`);
   if (!commit.ok) {
     log(`  Commit failed: ${(commit.stderr || commit.stdout).trim().slice(0, 200)}`);
