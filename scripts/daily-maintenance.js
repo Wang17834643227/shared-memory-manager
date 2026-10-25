@@ -84,11 +84,9 @@ function sleepSync(ms) {
 }
 
 function releasedToday() {
-  const last = run(`${GIT} -C "${PLUGIN_ROOT}" log -1 --format=%cI%x09%s 2>&1`);
-  if (!last.ok) return false;
-  const [iso, subject] = last.stdout.trim().split('\t');
-  if (!subject || !subject.startsWith('chore: release v')) return false;
-  return new Date(iso).toDateString() === new Date().toDateString();
+  const out = run(`${GIT} -C "${PLUGIN_ROOT}" log --since=midnight --grep="chore: release v" --format=%s 2>&1`);
+  if (!out.ok) return false;
+  return out.stdout.trim().split('\n').some((s) => s.startsWith('chore: release v'));
 }
 
 function syncDir(src, dst, filterFn) {
