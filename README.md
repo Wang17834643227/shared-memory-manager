@@ -80,18 +80,16 @@ Both tests must pass before publishing.
 
 ## Daily Automation
 
-`scripts/daily-maintenance.js` runs every day at 07:00 through Windows Task Scheduler:
+`scripts/daily-maintenance.js` runs every day at 07:00 (Qoder Automation, or Windows Task Scheduler as an alternative):
 
 1. Pull the latest changes from GitHub
 2. Sync the skill and consolidated memories into every CLAW install
 3. Validate structure, then run both agent test suites
 4. Bump the patch version, commit, and push the release
 
-Register the task once (Windows):
-```bash
-schtasks /Create /TN "SharedMemoryManager-DailyMaintenance" \
-  /TR "C:\path\to\shared-memory-manager\scripts\run-daily.cmd" /SC DAILY /ST 07:00 /F
-```
+A run lock and a same-day dedupe check prevent duplicate releases if two schedulers fire together.
+
+The git remote uses SSH (`git@github.com:…`); the SSH key at `~/.ssh/id_ed25519` must be registered under your account (GitHub → Settings → SSH keys).
 
 Logs are written to `logs/daily-maintenance.log` and `logs/scheduler-run.log`.
 
