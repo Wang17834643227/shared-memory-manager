@@ -2,7 +2,7 @@
   "name": "shared-memory-manager",
   "displayName": "Shared Memory Manager",
   "version": "1.0.0",
-  "description": "Universal memory management for ALL AI agents — QClaw, OpenClaw, EasyClaw, Qoder, and any SKILL.md-based system. Share, read, write, and sync user/project memories across machines with standardized formats.",
+  "description": "Unified memory system for all AI agents. Share, read, write, and sync memories across machines — compatible with QClaw, OpenClaw, EasyClaw, Qoder, and any agent platform.",
   "author": {
     "name": "Agnes"
   },
@@ -15,8 +15,7 @@
     "agent-memory",
     "qclaw",
     "openclaw",
-    "easyclaw",
-    "universal"
+    "easyclaw"
   ],
   "category": "Productivity",
   "tags": [
@@ -30,7 +29,7 @@
   "interface": {
     "displayName": "Memory Manager",
     "shortDescription": "Share and manage memories across all AI agents",
-    "longDescription": "A universal memory management system that allows ALL AI agents — on any platform (QClaw, OpenClaw, EasyClaw, Qoder) — to share, read, write, and sync memories. Supports user-level and project-level memories with standardized formats and workflows.",
+    "longDescription": "A unified memory management system that allows all intelligent agents to share, read, write, and sync memories. Supports user-level and project-level memories with standardized formats and workflows.",
     "developerName": "Agnes",
     "category": "productivity",
     "capabilities": [
