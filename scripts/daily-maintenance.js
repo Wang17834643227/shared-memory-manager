@@ -173,6 +173,11 @@ if (overallOK) {
   const data = JSON.parse(fs.readFileSync(PKG_JSON, 'utf8'));
   data.version = newVer;
   fs.writeFileSync(PKG_JSON, JSON.stringify(data, null, 2) + '\n');
+  const meta = { ownerId: 'agent', slug: data.name, version: newVer, publishedAt: Date.now() };
+  for (const target of SKILL_TARGETS) {
+    fs.mkdirSync(target, { recursive: true });
+    fs.writeFileSync(path.join(target, '_meta.json'), JSON.stringify(meta));
+  }
   run(`git -C "${PLUGIN_ROOT}" add .qoder-plugin/plugin.json`);
   const commit = run(`git -C "${PLUGIN_ROOT}" commit -m "chore: release v${newVer} (daily automated release)" 2>&1`);
   if (!commit.ok) {
