@@ -1,6 +1,6 @@
 ---
 name: memory-manager
-description: Universal memory management for ALL AI agents (QClaw, OpenClaw, EasyClaw, Qoder). Use when reading, writing, updating, or syncing memories on any agent platform. Supports consolidation, archival, and cross-device sharing of user/feedback/project/reference memory types.
+description: Unified memory management for all AI agents. Use when reading, writing, updating, or syncing memories on any agent platform (QClaw, OpenClaw, EasyClaw, Qoder, or other). Supports consolidation, archival, and cross-device sharing of user/feedback/project/reference memory types.
 ---
 
 # Shared Memory Manager

@@ -5,7 +5,7 @@
 - **Name:** shared-memory-manager
 - **Version:** 1.0.0
 - **Skill:** `memory-manager`
-- **Purpose:** Universal memory system for ALL AI agents (QClaw, OpenClaw, EasyClaw, Qoder) to share, read, write, and sync memories across machines
+- **Purpose:** Universal memory system for ALL AI agents (QClaw, OpenClaw, EasyClaw, Qoder, and any other platform) to share, read, write, and sync memories across machines
 
 ## Skill
 
