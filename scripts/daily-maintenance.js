@@ -40,12 +40,30 @@ const MEMORY_TARGETS = [
 const logDir = path.dirname(LOG_FILE);
 if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
 
+// Two schedulers (Windows Task Scheduler + Qoder automation) fire at 07:00,
+// so only one run may proceed at a time.
+const LOCK_FILE = path.join(PLUGIN_ROOT, 'logs', '.maintenance.lock');
+const LOCK_TTL_MS = 45 * 60 * 1000;
+
 function log(msg) {
   const ts = new Date().toISOString();
   const line = `[${ts}] ${msg}`;
   console.log(line);
   fs.appendFileSync(LOG_FILE, line + '\n');
 }
+
+if (fs.existsSync(LOCK_FILE)) {
+  const age = Date.now() - fs.statSync(LOCK_FILE).mtimeMs;
+  if (age < LOCK_TTL_MS) {
+    log(`[skip] Another maintenance run is active (lock age ${Math.round(age / 1000)}s). Exiting.`);
+    process.exit(0);
+  }
+  log('Removing stale lock from an interrupted run.');
+}
+fs.writeFileSync(LOCK_FILE, String(process.pid));
+process.on('exit', () => {
+  try { fs.unlinkSync(LOCK_FILE); } catch {}
+});
 
 function run(cmd, opts = {}) {
   try {
@@ -63,6 +81,14 @@ function bumpVersion(current) {
 
 function sleepSync(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function releasedToday() {
+  const last = run(`${GIT} -C "${PLUGIN_ROOT}" log -1 --format=%cI%x09%s 2>&1`);
+  if (!last.ok) return false;
+  const [iso, subject] = last.stdout.trim().split('\t');
+  if (!subject || !subject.startsWith('chore: release v')) return false;
+  return new Date(iso).toDateString() === new Date().toDateString();
 }
 
 function syncDir(src, dst, filterFn) {
@@ -174,7 +200,13 @@ if (!clawOK) overallOK = false;
 
 // Step 6: Daily release — bump patch, commit, push when every check passed
 log('\n[6/6] Publishing daily release...');
-if (overallOK) {
+if (!overallOK) {
+  log('  Release skipped — earlier checks failed.');
+  steps.push({ name: 'release', status: 'skipped' });
+} else if (releasedToday()) {
+  log('  Already released today, skipping duplicate publish.');
+  steps.push({ name: 'release', status: 'already-released' });
+} else {
   const currentVer = JSON.parse(fs.readFileSync(PKG_JSON, 'utf8')).version;
   const newVer = bumpVersion(currentVer);
   log(`  All checks passed, bumping ${currentVer} → ${newVer}`);
@@ -197,16 +229,18 @@ if (overallOK) {
   if (!commit.ok) {
     log(`  Commit failed: ${(commit.stderr || commit.stdout).trim().slice(0, 200)}`);
   }
-  const push = run(`${GIT} -C "${PLUGIN_ROOT}" push origin main 2>&1`);
+  let push = run(`${GIT} -C "${PLUGIN_ROOT}" push origin main 2>&1`);
+  for (let attempt = 1; !push.ok && attempt <= 2; attempt++) {
+    log(`  Push attempt ${attempt} failed, retrying in 5s...`);
+    sleepSync(5000);
+    push = run(`${GIT} -C "${PLUGIN_ROOT}" push origin main 2>&1`);
+  }
   if (push.ok) {
     log(`  Published v${newVer} to GitHub ✓`);
   } else {
     log(`  Push failed: ${push.stderr?.trim()?.slice(0, 200) || push.stdout?.trim()?.slice(0, 200)}`);
   }
   steps.push({ name: 'release', status: push.ok ? 'published' : 'fail', version: newVer });
-} else {
-  log('  Release skipped — earlier checks failed.');
-  steps.push({ name: 'release', status: 'skipped' });
 }
 
 // Summary
