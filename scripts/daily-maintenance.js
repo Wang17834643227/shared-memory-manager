@@ -20,6 +20,10 @@ const VALIDATE_SCRIPT = path.join(PLUGIN_ROOT, 'scripts', 'validate.js');
 const TEST_AGENTS_SCRIPT = path.join(PLUGIN_ROOT, 'scripts', 'test_agents.js');
 const TEST_CLAW_SCRIPT = path.join(PLUGIN_ROOT, 'scripts', 'test_claw_agents.js');
 
+// Task Scheduler runs without the user's PATH, so resolve git by absolute path
+const GIT_CANDIDATE = 'C:/Users/1/.qoder-cn/bin/git/cmd/git.exe';
+const GIT = fs.existsSync(GIT_CANDIDATE) ? `"${GIT_CANDIDATE}"` : 'git';
+
 // CLAW skill & memory install targets
 const SKILL_TARGETS = [
   'C:/Users/1/.qclaw/skills/shared-memory-manager',
@@ -93,7 +97,7 @@ const steps = [];
 
 // Step 1: Pull latest
 log('\n[1/6] Pulling latest from GitHub...');
-const pull = run(`git -C "${PLUGIN_ROOT}" pull --ff-only 2>&1`);
+const pull = run(`${GIT} -C "${PLUGIN_ROOT}" pull --ff-only 2>&1`);
 if (pull.ok) {
   log(`  Pull OK: ${pull.stdout.trim().split('\n').pop()}`);
   steps.push({ name: 'pull', status: 'ok' });
@@ -182,18 +186,18 @@ if (overallOK) {
     fs.mkdirSync(target, { recursive: true });
     fs.writeFileSync(path.join(target, '_meta.json'), JSON.stringify(meta));
   }
-  const add = run(`git -C "${PLUGIN_ROOT}" add .qoder-plugin/plugin.json`);
+  const add = run(`${GIT} -C "${PLUGIN_ROOT}" add .qoder-plugin/plugin.json`);
   if (!add.ok) {
     // Another git process may hold index.lock; retry briefly before giving up
     log(`  Add failed, retrying: ${(add.stderr || add.stdout).trim().slice(0, 160)}`);
     sleepSync(2000);
-    run(`git -C "${PLUGIN_ROOT}" add .qoder-plugin/plugin.json`);
+    run(`${GIT} -C "${PLUGIN_ROOT}" add .qoder-plugin/plugin.json`);
   }
-  const commit = run(`git -C "${PLUGIN_ROOT}" commit -m "chore: release v${newVer} (daily automated release)" 2>&1`);
+  const commit = run(`${GIT} -C "${PLUGIN_ROOT}" commit -m "chore: release v${newVer} (daily automated release)" 2>&1`);
   if (!commit.ok) {
     log(`  Commit failed: ${(commit.stderr || commit.stdout).trim().slice(0, 200)}`);
   }
-  const push = run(`git -C "${PLUGIN_ROOT}" push origin main 2>&1`);
+  const push = run(`${GIT} -C "${PLUGIN_ROOT}" push origin main 2>&1`);
   if (push.ok) {
     log(`  Published v${newVer} to GitHub ✓`);
   } else {
