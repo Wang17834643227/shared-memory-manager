@@ -1,33 +1,30 @@
 # Shared Memory Manager
 
-A Qoder plugin that provides unified memory management for all AI agents. Share, read, write, and sync memories across machines.
+A cross-platform memory management system for ALL AI agents. Share, read, write, and sync memories across any agent software — Qoder, QClaw, OpenClaw, EasyClaw, and beyond.
 
 ## What It Does
 
-- Consolidates user-level and project-level memories into a shared system
+- Consolidates user-level and project-level memories into a unified shared system
 - Provides standardized memory formats (user, feedback, project, reference)
-- Enables all intelligent agents to access the same memory context
+- Enables every intelligent agent on any platform to access the same memory context
 - Supports cross-device memory sync via GitHub
 
 ## Installation
 
-Clone this repository and install as a Qoder plugin:
+Clone this repository and install into any agent platform:
 
 ```bash
-qoder plugin install ./shared-memory-manager
+# Copy skills to your agent's skills directory
+cp -r shared-memory-manager/skills/memory-manager ~/.qclaw/skills/
+cp -r shared-memory-manager/skills/memory-manager ~/.openclaw/skills/
+cp -r shared-memory-manager/skills/memory-manager ~/.easyclaw/skills/
 ```
 
-Or copy the `.qoder-plugin` directory to your Qoder plugins folder.
+Supported platforms: **QClaw · OpenClaw · EasyClaw · Qoder · any SKILL.md-based agent**
 
 ## Usage
 
-Activate the skill:
-
-```
-/shared-memory-manager
-```
-
-Or invoke the memory skill directly:
+Any agent that loads `SKILL.md` can use this skill. Activate by invoking:
 
 ```
 /memory-manager
@@ -37,18 +34,19 @@ Or invoke the memory skill directly:
 
 | Scope | Path | Description |
 |-------|------|-------------|
-| User | `~/.qoder-cn/memory/` | Shared across all projects |
-| Project | `~/.qoder-cn/projects/<project>/memory/` | Tied to specific project |
+| User | `~/.qclaw/memory/` · `~/.openclaw/memory/` · `~/.qoder-cn/memory/` | Shared across all agents |
+| Project | `~/.qclaw/projects/<slug>/memory/` | Tied to specific project |
 
 ## Structure
 
 ```
 shared-memory-manager/
 ├── .qoder-plugin/
-│   └── plugin.json           # Plugin manifest
+│   └── plugin.json           # Manifest (Qoder-specific entry point)
 ├── skills/
 │   └── memory-manager/
-│       └── SKILL.md          # Core skill instructions
+│       ├── SKILL.md          # Universal skill — all agents read this
+│       └── _meta.json        # QClaw/OpenClaw metadata
 ├── references/
 │   ├── memory-management.md  # Operations & routing rules
 │   ├── memory-schema.md      # Directory layout & validation
@@ -57,6 +55,10 @@ shared-memory-manager/
 │       ├── feedback-memories.md
 │       ├── project-memories.md
 │       └── reference-memories.md
+├── scripts/
+│   ├── validate.js           # 22 structural checks
+│   ├── test_agents.js        # 20-agent × 12-round compat test
+│   └── test_claw_agents.js   # 5-CLAW-agent × 12-round test
 ├── MEMORY.md                 # Plugin memory index
 └── .gitignore
 ```
@@ -68,12 +70,17 @@ Run the built-in validator (22 structural checks):
 node scripts/validate.js
 ```
 
-Run the multi-agent compatibility test (20 agents × 12 rounds = 2400 checks):
+Run the multi-agent compatibility test (20 Qoder agents × 12 rounds = 2400 checks):
 ```bash
 node scripts/test_agents.js
 ```
 
-Both tests must pass before publishing.
+Run the CLAW agent integration test (5 CLAW agents × 12 rounds = 600 checks):
+```bash
+node scripts/test_claw_agents.js
+```
+
+All tests must pass before publishing.
 
 ## License
 
