@@ -61,6 +61,20 @@ shared-memory-manager/
 └── .gitignore
 ```
 
+## Validation & Testing
+
+Run the built-in validator (22 structural checks):
+```bash
+node scripts/validate.js
+```
+
+Run the multi-agent compatibility test (20 agents × 12 rounds = 2400 checks):
+```bash
+node scripts/test_agents.js
+```
+
+Both tests must pass before publishing.
+
 ## License
 
 MIT
