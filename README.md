@@ -53,7 +53,9 @@ shared-memory-manager/
 ├── scripts/
 │   ├── validate.js           # 22 structural checks
 │   ├── test_agents.js        # 20-agent × 12-round compatibility test
-│   └── test_claw_agents.js   # 5-CLAW-agent × 12-round integration test
+│   ├── test_claw_agents.js   # 5-CLAW-agent × 12-round integration test
+│   ├── daily-maintenance.js  # Pull → sync → validate → test → release
+│   └── run-daily.cmd         # Windows Task Scheduler entrypoint
 └── .gitignore
 ```
 
@@ -75,6 +77,23 @@ node scripts/test_claw_agents.js
 ```
 
 Both tests must pass before publishing.
+
+## Daily Automation
+
+`scripts/daily-maintenance.js` runs every day at 07:00 through Windows Task Scheduler:
+
+1. Pull the latest changes from GitHub
+2. Sync the skill and consolidated memories into every CLAW install
+3. Validate structure, then run both agent test suites
+4. Bump the patch version, commit, and push the release
+
+Register the task once (Windows):
+```bash
+schtasks /Create /TN "SharedMemoryManager-DailyMaintenance" \
+  /TR "C:\path\to\shared-memory-manager\scripts\run-daily.cmd" /SC DAILY /ST 07:00 /F
+```
+
+Logs are written to `logs/daily-maintenance.log` and `logs/scheduler-run.log`.
 
 ## License
 
