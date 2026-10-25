@@ -1,7 +1,7 @@
 {
   "name": "shared-memory-manager",
   "displayName": "Shared Memory Manager",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Unified memory system for all AI agents. Share, read, write, and sync memories across machines — compatible with QClaw, OpenClaw, EasyClaw, Qoder, and any agent platform.",
   "author": {
     "name": "Agnes"
